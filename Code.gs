@@ -14,6 +14,15 @@ function onOpen() {
     .addToUi();
 }
 
+// Used in cell A2 inside "Columns to Use" sheet 
+function showAllAvailableColumns() {
+  var columns;
+  columns = Object.entries(WATCHLIST_COLUMNS).map(subarray => [...subarray, "Watchlist"]);
+  columns = columns.concat(Object.entries(HISTORY_COLUMNS).map(subarray => [...subarray, "History"]));
+  columns = columns.concat(Object.entries(CRUNCHYLIST_COLUMNS).map(subarray => [...subarray, "Crunchylists"]));
+  return columns;
+}
+
 
 function getToken() {
   var token = "";
@@ -32,11 +41,23 @@ function getAccountId(options) {
 
 function exportWatchlist() {
 
-  // Get the Authentication token from user input
+  const ss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Watch List");
+  const sheetColumns = ss.getRange(1, 1, 1, ss.getLastColumn()).getValues().flat();
+
+  // Check column names
+  for (const key of sheetColumns) {
+    if (!WATCHLIST_COLUMNS.hasOwnProperty(key)) {
+      SpreadsheetApp.getUi().alert(key + " is not a valid column name");
+      return;
+    }
+  }
+
+  //Get the Authentication token from user input
   const token = getToken();
   if (token == "") {
     return;
   }
+
 
   // Get the account_id that is necessary to export/import the Watchlist
   const options = {
@@ -49,27 +70,47 @@ function exportWatchlist() {
   };
   const account_id = getAccountId(options);
 
+
   // Get Watchlist data (you can change n=500 parameter in the urlWatchlist to return n anime)
   const urlWatchlist = "https://www.crunchyroll.com/content/v2/discover/" + account_id + "/watchlist?order=desc&n=500";
   var watchlistJSON = JSON.parse(UrlFetchApp.fetch(urlWatchlist, options).getContentText()).data;
 
+
+  // For each Anime (First loop) I need to extract each column specified in the sheet (second loop) which value can be in a sub-object of the returned JSON (Third loop, example: Anime Code -> panel.episode_metadata.series_id)
   var watchlist = []
   for (let i = 0; i < watchlistJSON.length; i++) {
-    if (watchlistJSON[i].panel.type == "episode") {
-      watchlist.push([watchlistJSON[i].panel.episode_metadata.series_id, watchlistJSON[i].panel.episode_metadata.series_title])
+    var row = [];
+    for (let x = 0; x < sheetColumns.length; x++) {
+      var json_path = WATCHLIST_COLUMNS[sheetColumns[x]].split(".");
+      var currentobj = watchlistJSON[i];
+
+      for (let y = 0; y < json_path.length; y++) {
+        if (currentobj.hasOwnProperty(json_path[y])) {
+          // Key found inside JSON
+          currentobj = currentobj[json_path[y]];
+        }
+        else if (json_path[y] in movie_keys && currentobj.hasOwnProperty(movie_keys[json_path[y]])) {
+          // It's a movie
+          currentobj = currentobj[movie_keys[json_path[y]]];
+        }
+        else {
+          // Something else like an episode_media 
+          currentobj = "";
+          break;
+        }
+      }
+      row.push(currentobj)
     }
-    else if (watchlistJSON[i].panel.type == "movie") {
-      watchlist.push([watchlistJSON[i].panel.movie_metadata.movie_listing_id, watchlistJSON[i].panel.movie_metadata.movie_listing_title])
-    }
+    watchlist.push(row);
   }
 
-  // Clear previous data
-  const ss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Watch List");
-  ss.getRange("A2:B").clear();
+
+  // Clear previous data from the sheet
+  ss.getRange(2, 1, ss.getLastRow(), ss.getLastColumn()).clear();
 
   // Write new data
-  if (watchlist.length > 1) {
-    ss.getRange("A2:B" + (watchlist.length + 1)).setValues(watchlist);
+  if (watchlist.length > 0) {
+    ss.getRange(2, 1, watchlist.length, sheetColumns.length).setValues(watchlist);
   }
 }
 
@@ -126,9 +167,18 @@ function importWatchlist() {
 }
 
 
-
-
 function exportHistory() {
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("History");
+  const sheetColumns = ss.getRange(1, 1, 1, ss.getLastColumn()).getValues().flat();
+
+  // Check column names
+  for (const key of sheetColumns) {
+    if (!HISTORY_COLUMNS.hasOwnProperty(key)) {
+      SpreadsheetApp.getUi().alert(key + " is not a valid column name");
+      return;
+    }
+  }
 
   // Get the Authentication token from user input
   const token = getToken();
@@ -140,35 +190,62 @@ function exportHistory() {
   const options = {
     "headers": {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      "Accept": "*/*",
+      "Accept": "*/* ",
       "Accept-Encoding": "gzip, deflate, br, zstd",
       "Authorization": token
     }
   };
   const account_id = getAccountId(options);
 
+
   // Get History data (you can change n=700 parameter in the urlWatchlist to return n anime)
   const urlHistory = "https://www.crunchyroll.com/content/v2/" + account_id + "/watch-history?page_size=1000";
   const historyJSON = JSON.parse(UrlFetchApp.fetch(urlHistory, options).getContentText()).data;
 
+
   var history = []
   for (let i = 0; i < historyJSON.length; i++) {
-    if (historyJSON[i].panel.type == "episode") {
-      history.push([historyJSON[i].panel.id, historyJSON[i].panel.episode_metadata.series_title, historyJSON[i].panel.episode_metadata.season_number, historyJSON[i].panel.episode_metadata.episode]);
+    var row = [];
+
+    for (let x = 0; x < sheetColumns.length; x++) {
+      var json_path = HISTORY_COLUMNS[sheetColumns[x]].split(".");
+      var currentobj = historyJSON[i];
+      console.log()
+      for (let y = 0; y < json_path.length; y++) {
+        if (currentobj.hasOwnProperty(json_path[y])) {
+          currentobj = currentobj[json_path[y]];
+        }
+        else if (json_path[y] in movie_keys) {
+          if (currentobj.hasOwnProperty(movie_keys[json_path[y]])) {
+            // It's a movie
+            currentobj = currentobj[movie_keys[json_path[y]]];
+          }
+          else {
+            // Something else like episode_media
+            currentobj = "";
+            break;
+          }
+        }
+        else {
+          currentobj = "";
+          break;
+        }
+      }
+
+      row.push(currentobj)
     }
-    else if (historyJSON[i].panel.type == "movie") {
-      history.push([historyJSON[i].panel.id, historyJSON[i].panel.movie_metadata.movie_listing_title, "", ""]);
-    }
+
+    history.push(row);
   }
 
-  // Clear previous data in the sheet
-  const ss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("History");
-  ss.getRange("A2:D").clear();
 
-  if (history.length > 1) {
-    ss.getRange("A2:D" + (history.length + 1)).setValues(history);
+  // Clear previous data from the sheet
+  ss.getRange(2, 1, ss.getLastRow(), ss.getLastColumn()).clear();
+
+  // Write new data
+  if (history.length > 0) {
+    ss.getRange(2, 1, history.length, sheetColumns.length).setValues(history);
   }
-
 }
 
 
@@ -220,6 +297,19 @@ function importHistory() {
 
 function exportCrunchyLists() {
 
+  const ss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Crunchylist");
+  const sheetColumns = ss.getRange(1, 1, 1, ss.getLastColumn()).getValues().flat();
+
+
+  // Check column names
+  for (const key of sheetColumns) {
+    if (!CRUNCHYLIST_COLUMNS.hasOwnProperty(key)) {
+      SpreadsheetApp.getUi().alert(key + " is not a valid column name");
+      return;
+    }
+  }
+
+
   // Get the Authentication token from user input
   const token = getToken();
   if (token == "") {
@@ -246,18 +336,47 @@ function exportCrunchyLists() {
   var crunchylistData;
   for (let i = 0; i < crunchylistsJSON.length; i++) {
     crunchylistData = JSON.parse(UrlFetchApp.fetch(urlCrunchylists + "/" + crunchylistsJSON[i].list_id, options).getContentText()).data;
-    for (let x = 0; x < crunchylistData.length; x++) {
-      crunchylists.push([crunchylistsJSON[i].title, crunchylistData[x].id, crunchylistData[x].panel.title])
+    for (let z = 0; z < crunchylistData.length; z++) {
+      //crunchylists.push([crunchylistsJSON[i].title, crunchylistData[x].id, crunchylistData[x].panel.title])
+      var row = [];
+      for (let x = 0; x < sheetColumns.length; x++) {
+        var json_path = CRUNCHYLIST_COLUMNS[sheetColumns[x]].split(".");
+        var currentobj = crunchylistData[z];
+
+        // If it's the crunchylist title I extract it from the first response of the crunchylists
+        if (json_path.length > 0 && json_path[0] == "title") {
+          currentobj = crunchylistsJSON[i].title;
+        }
+        else {
+          for (let y = 0; y < json_path.length; y++) {
+            if (currentobj.hasOwnProperty(json_path[y])) {
+              currentobj = currentobj[json_path[y]];
+            }
+            // if it's a movie i replace the key with the equivalent of series
+            else if (json_path[y] in movie_keys && currentobj.hasOwnProperty(movie_keys[json_path[y]])) {
+              // It's a movie
+              currentobj = currentobj[movie_keys[json_path[y]]];
+            }
+            else {
+              // Something else like an episode_media 
+              currentobj = "";
+              break;
+            }
+          }
+        }
+
+        row.push(currentobj)
+      }
+      crunchylists.push(row);
     }
   }
 
-  // Clear previous data
-  const ss = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Crunchylist");
-  ss.getRange("A2:C").clear();
+  // Clear previous data from the sheet
+  ss.getRange(2, 1, ss.getLastRow(), ss.getLastColumn()).clear();
 
   // Write new data
   if (crunchylists.length > 0) {
-    ss.getRange("A2:C" + (crunchylists.length + 1)).setValues(crunchylists);
+    ss.getRange(2, 1, crunchylists.length, sheetColumns.length).setValues(crunchylists);
   }
 }
 
